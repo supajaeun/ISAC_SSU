@@ -9,7 +9,7 @@ Original file is located at
 
 !pip install torch torchvision torchaudio tqdm -q
 
-# --- 라이브러리 임포트 ---
+# --- Import libraries ---
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -22,14 +22,14 @@ import numpy as np
 from tqdm import tqdm
 import pandas as pd
 
-# --- GPU / CPU 설정 ---
+# --- GPU / CPU configuration ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"사용 디바이스: {device}")
-print(f"PyTorch 버전: {torch.__version__}")
-print(f"NumPy 버전: {np.__version__}")
+print(f"PyTorch version: {torch.__version__}")
+print(f"NumPy version: {np.__version__}")
 
-# --- Kaggle API 설정 (Kaggle.json 업로드 필요) ---
-# 아래 셀 실행 후 나타나는 '파일 선택' 버튼을 눌러 kaggle.json 파일을 업로드하세요.
+# --- Kaggle API setup (for downloading dataset) ---
+# Upload kaggle.json for authentication
 from google.colab import files
 if not os.path.exists("kaggle.json"):
     files.upload()
@@ -38,16 +38,16 @@ if not os.path.exists("kaggle.json"):
 !cp kaggle.json ~/.kaggle/
 !chmod 600 ~/.kaggle/kaggle.json
 
-# --- ImageNet-mini 데이터셋 다운로드 및 압축 해제 ---
+# --- Download and extract ImageNet-mini dataset ---
 if not os.path.exists("/content/imagenet-mini"):
-    print("ImageNet-mini 데이터셋 다운로드를 시작합니다...")
+    print("Downloading ImageNet-mini dataset...")
     !kaggle datasets download -d ifigotin/imagenetmini-1000
     !unzip -q imagenetmini-1000.zip -d /content/imagenet-mini
-    print("다운로드 및 압축 해제 완료.")
+    print("Download and extraction completed.")
 else:
-    print("ImageNet-mini 데이터셋이 이미 존재합니다.")
+    print("ImageNet-mini dataset already exists.")
 
-# --- 데이터 로더 설정 ---
+# --- Data loader setup ---
 data_dir = "/content/imagenet-mini/imagenet-mini"
 transform = transforms.Compose([
     transforms.Resize(256),
@@ -56,13 +56,12 @@ transform = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 val_dataset = torchvision.datasets.ImageFolder(os.path.join(data_dir, "val"), transform=transform)
-val_loader = DataLoader(val_dataset, batch_size=128, shuffle=False, num_workers=2) # 배치 사이즈 증가
+val_loader = DataLoader(val_dataset, batch_size=128, shuffle=False, num_workers=2) # batch size increased
 
-print(f"\nValidation 이미지 개수: {len(val_dataset)}")
-print(f"클래스 개수: {len(val_dataset.classes)}")
+print(f"\nNumber of validation images: {len(val_dataset)}")
+print(f"Number of classes: {len(val_dataset.classes)}")
 
-# 평가함수
-
+# --- Evaluation function: computes Top-1, Top-5 accuracy and inference time ---
 def evaluate_model(model, dataloader, device):
     model.to(device)
     model.eval()
@@ -73,14 +72,14 @@ def evaluate_model(model, dataloader, device):
             images, labels = images.to(device), labels.to(device)
             outputs = model(images)
 
-            # Top-5 예측값 계산
+            # Compute Top-5 predictions
             _, pred = outputs.topk(5, 1, True, True)
             pred = pred.t()
             correct = pred.eq(labels.view(1, -1).expand_as(pred))
 
-            # Top-1 정확도
+            # Count Top-1 accuracy
             correct_top1 += correct[:1].reshape(-1).float().sum(0, keepdim=True).item()
-            # Top-5 정확도
+            # Count Top-5 accuracy
             correct_top5 += correct[:5].reshape(-1).float().sum(0, keepdim=True).item()
             total += labels.size(0)
 
@@ -89,71 +88,77 @@ def evaluate_model(model, dataloader, device):
     top5_acc = (correct_top5 / total) * 100
     return top1_acc, top5_acc, elapsed
 
-# --- 공통 모델 크기 측정 함수 ---
+# --- Function to measure model size (in MB) ---
 def get_model_size(model, file_path="temp_model.pth"):
-    torch.save(model.state_dict(), file_path)
+    torch.save(model.state_dict(), file_path)       # Save model parameters
     size_mb = os.path.getsize(file_path) / (1024 * 1024)
     os.remove(file_path)
     return size_mb
 
-# 결과 저장을 위한 딕셔너리
+# Dictionary to store all results
 results = {}
 
 # ==============================================================================
-# ## 1단계: Pretrained FP32 ResNet-50 성능 측정 (CPU 평가)
+# Step 1: Evaluate Pretrained FP32 ResNet-50 (Baseline on CPU)
 # ==============================================================================
-print("\n--- 1단계: FP32 ResNet-50 성능 측정 시작 ---")
-fp32_model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
+print("\n--- Step 1: FP32 ResNet-50 evaluation ---")
+fp32_model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)  # Load FP32 pretrained model
 
 fp32_size = get_model_size(fp32_model)
-
-# =============================================================================
-#  수정된 부분: device 변수 대신 "cpu"를 직접 전달하여 CPU에서 평가
-# =============================================================================
 fp32_top1, fp32_top5, fp32_time = evaluate_model(fp32_model, val_loader, "cpu")
 
+results['FP32'] = {
+    'Model Size (MB)': fp32_size,
+    'Top-1 Acc (%)': fp32_top1,
+    'Top-5 Acc (%)': fp32_top5,
+    'Inference Time (s)': fp32_time
+}
 
-results['FP32'] = {'Model Size (MB)': fp32_size, 'Top-1 Acc (%)': fp32_top1, 'Top-5 Acc (%)': fp32_top5, 'Inference Time (s)': fp32_time}
-
-print(f"\n[FP32] 모델 크기: {fp32_size:.2f} MB")
-print(f"[FP32] Top-1 정확도: {fp32_top1:.2f}%")
-print(f"[FP32] Top-5 정확도: {fp32_top5:.2f}%")
-print(f"[FP32] 평가 시간 (CPU): {fp32_time:.2f} 초")
+print(f"\n[FP32] Model size: {fp32_size:.2f} MB")
+print(f"[FP32] Top-1 Accuracy: {fp32_top1:.2f}%")
+print(f"[FP32] Top-5 Accuracy: {fp32_top5:.2f}%")
+print(f"[FP32] Inference time (CPU): {fp32_time:.2f} s")
 
 # ==============================================================================
-# ## 2단계: Pretrained INT8 ResNet-50 (Quantized) 성능 측정
+# Step 2: Evaluate Pretrained INT8 ResNet-50 (Quantized Model)
 # ==============================================================================
-print("\n--- 2단계: Pretrained INT8 ResNet-50 성능 측정 시작 ---")
+print("\n--- Step 2: Pretrained INT8 ResNet-50 evaluation ---")
 try:
-    int8_model = torchvision.models.quantization.resnet50(pretrained=True, quantize=True)
+    int8_model = torchvision.models.quantization.resnet50(pretrained=True, quantize=True)  # Load quantized INT8 model
     int8_model.eval()
 
     int8_size = get_model_size(int8_model)
-
     int8_top1, int8_top5, int8_time = evaluate_model(int8_model, val_loader, "cpu")
 
-    results['Pretrained INT8'] = {'Model Size (MB)': int8_size, 'Top-1 Acc (%)': int8_top1, 'Top-5 Acc (%)': int8_top5, 'Inference Time (s)': int8_time}
+    results['Pretrained INT8'] = {
+        'Model Size (MB)': int8_size,
+        'Top-1 Acc (%)': int8_top1,
+        'Top-5 Acc (%)': int8_top5,
+        'Inference Time (s)': int8_time
+    }
 
-    print(f"\n[Pretrained INT8] 모델 크기: {int8_size:.2f} MB")
-    print(f"[Pretrained INT8] Top-1 정확도: {int8_top1:.2f}%")
-    print(f"[Pretrained INT8] Top-5 정확도: {int8_top5:.2f}%")
-    print(f"[Pretrained INT8] 평가 시간 (CPU): {int8_time:.2f} 초")
+    print(f"\n[Pretrained INT8] Model size: {int8_size:.2f} MB")
+    print(f"[Pretrained INT8] Top-1 Accuracy: {int8_top1:.2f}%")
+    print(f"[Pretrained INT8] Top-5 Accuracy: {int8_top5:.2f}%")
+    print(f"[Pretrained INT8] Inference time (CPU): {int8_time:.2f} s")
 
 except Exception as e:
-    print(f"Pretrained INT8 모델 로딩 실패: {e}. 이 단계는 건너뜁니다.")
+    print(f"Failed to load Pretrained INT8 model: {e}. Skipping this step.")
     results['Pretrained INT8'] = {'Model Size (MB)': 'N/A', 'Top-1 Acc (%)': 'N/A', 'Top-5 Acc (%)': 'N/A', 'Inference Time (s)': 'N/A'}
 
 # ==============================================================================
-# ## 3단계: FP32 ResNet-50 직접 양자화 구현 (수식 기반)
+# Step 3: Manual INT8 Quantization (Naive implementation with scale)
 # ==============================================================================
-print("\n--- 3단계: 수식 기반 직접 양자화 구현 및 성능 측정 시작 ---")
+print("\n--- Step 3: Manual INT8 quantization and evaluation ---")
 
+# Quantization: map float tensor → int8 tensor using max-abs scaling
 def quantize_tensor(x):
-    alpha = torch.max(torch.abs(x))
-    scale = alpha / 127.0
+    alpha = torch.max(torch.abs(x))        # max absolute value
+    scale = alpha / 127.0                  # scaling factor
     x_q = torch.round(x / scale).to(torch.int8)
     return x_q, scale
 
+# Dequantization: map int8 tensor → float tensor
 def dequantize_tensor(x_q, scale):
     return x_q.float() * scale
 
@@ -161,25 +166,27 @@ manual_quant_model = copy.deepcopy(fp32_model).to("cpu")
 quantized_state_dict = {}
 scales = {}
 
+# Apply quantization to weights
 for name, param in manual_quant_model.state_dict().items():
-    if 'weight' in name and param.dim() > 1:
+    if 'weight' in name and param.dim() > 1:   # only quantize weight tensors
         quantized_param, scale = quantize_tensor(param)
         quantized_state_dict[name] = quantized_param
         scales[name] = scale
     else:
         quantized_state_dict[name] = param
 
+# Estimate model size: count int8 params (1 byte each) and scales (float32)
 quant_params_size = 0
 float_params_size = 0
 for name, param in quantized_state_dict.items():
     if param.dtype == torch.int8:
-        quant_params_size += param.numel() * 1
-        float_params_size += 4
+        quant_params_size += param.numel() * 1   # int8 → 1 byte
+        float_params_size += 4                  # store scale (1 float32 per tensor)
     else:
         float_params_size += param.numel() * 4
-
 manual_quant_size = (quant_params_size + float_params_size) / (1024*1024)
 
+# Reconstruct model with dequantized parameters for evaluation
 dequantized_state_dict = {}
 for name, param in quantized_state_dict.items():
     if name in scales:
@@ -190,29 +197,29 @@ for name, param in quantized_state_dict.items():
 eval_model = copy.deepcopy(fp32_model).to("cpu")
 eval_model.load_state_dict(dequantized_state_dict)
 
-# =============================================================================
-#  수정된 부분: device 변수 대신 "cpu"를 직접 전달하여 CPU에서 평가
-# =============================================================================
 manual_quant_top1, manual_quant_top5, manual_quant_time = evaluate_model(eval_model, val_loader, "cpu")
 
-results['Manual INT8'] = {'Model Size (MB)': manual_quant_size, 'Top-1 Acc (%)': manual_quant_top1, 'Top-5 Acc (%)': manual_quant_top5, 'Inference Time (s)': manual_quant_time}
+results['Manual INT8'] = {
+    'Model Size (MB)': manual_quant_size,
+    'Top-1 Acc (%)': manual_quant_top1,
+    'Top-5 Acc (%)': manual_quant_top5,
+    'Inference Time (s)': manual_quant_time
+}
 
-print(f"\n[Manual INT8] 모델 크기: {manual_quant_size:.2f} MB")
-print(f"[Manual INT8] Top-1 정확도: {manual_quant_top1:.2f}%")
-print(f"[Manual INT8] Top-5 정확도: {manual_quant_top5:.2f}%")
-print(f"[Manual INT8] 평가 시간 (CPU): {manual_quant_time:.2f} 초")
+print(f"\n[Manual INT8] Model size: {manual_quant_size:.2f} MB")
+print(f"[Manual INT8] Top-1 Accuracy: {manual_quant_top1:.2f}%")
+print(f"[Manual INT8] Top-5 Accuracy: {manual_quant_top5:.2f}%")
+print(f"[Manual INT8] Inference time (CPU): {manual_quant_time:.2f} s")
 
 # ==============================================================================
-# ## 4단계: 최종 결과 비교 및 분석 (테이블)
+# Step 4: Final results comparison (table)
 # ==============================================================================
 import pandas as pd
-from IPython.display import display, Markdown # display 함수를 임포트합니다.
+from IPython.display import display, Markdown 
 
 print("\n--- Final Results Comparison ---\n")
 
 df = pd.DataFrame(results).T.round(2)
 
-# print(df) 대신 display(df)를 사용하여 명시적으로 표를 렌더링합니다.
-# Markdown을 이용해 제목을 추가할 수도 있습니다.
 display(Markdown("### Table 1: Model Performance Comparison"))
 display(df)
