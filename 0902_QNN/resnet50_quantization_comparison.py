@@ -123,28 +123,24 @@ print(f"[FP32] Inference time (CPU): {fp32_time:.2f} s")
 # Step 2: Evaluate Pretrained INT8 ResNet-50 (Quantized Model)
 # ==============================================================================
 print("\n--- Step 2: Pretrained INT8 ResNet-50 evaluation ---")
-try:
-    int8_model = torchvision.models.quantization.resnet50(pretrained=True, quantize=True)  # Load quantized INT8 model
-    int8_model.eval()
+int8_model = torchvision.models.quantization.resnet50(pretrained=True, quantize=True)  # Load quantized INT8 model
+int8_model.eval()
 
-    int8_size = get_model_size(int8_model)
-    int8_top1, int8_top5, int8_time = evaluate_model(int8_model, val_loader, "cpu")
+int8_size = get_model_size(int8_model)
+int8_top1, int8_top5, int8_time = evaluate_model(int8_model, val_loader, "cpu")
 
-    results['Pretrained INT8'] = {
-        'Model Size (MB)': int8_size,
-        'Top-1 Acc (%)': int8_top1,
-        'Top-5 Acc (%)': int8_top5,
-        'Inference Time (s)': int8_time
-    }
+results['Pretrained INT8'] = {
+    'Model Size (MB)': int8_size,
+    'Top-1 Acc (%)': int8_top1,
+    'Top-5 Acc (%)': int8_top5,
+    'Inference Time (s)': int8_time
+}
 
     print(f"\n[Pretrained INT8] Model size: {int8_size:.2f} MB")
     print(f"[Pretrained INT8] Top-1 Accuracy: {int8_top1:.2f}%")
     print(f"[Pretrained INT8] Top-5 Accuracy: {int8_top5:.2f}%")
     print(f"[Pretrained INT8] Inference time (CPU): {int8_time:.2f} s")
 
-except Exception as e:
-    print(f"Failed to load Pretrained INT8 model: {e}. Skipping this step.")
-    results['Pretrained INT8'] = {'Model Size (MB)': 'N/A', 'Top-1 Acc (%)': 'N/A', 'Top-5 Acc (%)': 'N/A', 'Inference Time (s)': 'N/A'}
 
 # ==============================================================================
 # Step 3: Manual INT8 Quantization (Naive implementation with scale)
